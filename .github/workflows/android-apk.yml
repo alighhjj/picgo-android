@@ -195,11 +195,21 @@ jobs:
             exit 1
           fi
 
+      # 附一份校验和：下载后可以核对文件是否完整。
+      # （出过一次「下载卡在 0 没有进度、不确定拿到的文件是否完整」的情况 —— 有哈希就能一眼判定。）
+      - name: 生成校验和
+        run: |
+          APK_DIR=src-tauri/gen/android/app/build/outputs/apk
+          cd "$APK_DIR"
+          find . -name "*.apk" -type f -exec sha256sum {} \; | sed 's#\./##' | tee SHA256SUMS.txt
+
       - uses: actions/upload-artifact@v4
         with:
           name: picgo-tutu-apk
           if-no-files-found: error
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/apk/**/SHA256SUMS.txt
 
       # 打 tag 时把 APK 挂到 Release：公开仓库的 Release 资产可以直接下载，
       # 不像 Actions artifact 那样需要登录，方便手机上直接装。
@@ -207,5 +217,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/apk/**/SHA256SUMS.txt
           generate_release_notes: true
