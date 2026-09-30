@@ -131,7 +131,33 @@ async function main() {
     check('错误路径：显示 API Key 无效的原因', errorText.includes('API Key 无效'), `实际：${errorText}`)
     check('错误路径：不显示成功结果', (await page.locator('#result-list .link').count()) === 0)
 
-    // --- 6. 没有未捕获异常 ---------------------------------------------------
+    // --- 6. 诊断与网络自检面板 -----------------------------------------------
+    // 真机出问题时用户拿不到 logcat，所以这个面板是唯一的取证入口，必须验。
+    await page.click('[data-tab="settings"]')
+    await page.click('#diagnostics > summary')
+    await page.waitForSelector('#run-probe', { state: 'visible' })
+    await page.click('#run-probe')
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('#diagnostics-out')
+        return el && el.textContent.includes('网络自检') && el.textContent.includes('HTTPS 请求')
+      },
+      { timeout: 15000 }
+    )
+
+    const diagText = await page.textContent('#diagnostics-out')
+    check('诊断面板：带出缓存目录等路径信息', diagText.includes('缓存目录'), diagText.slice(0, 140))
+    check(
+      '诊断面板：自检包含三步（解析域名 / TCP / HTTPS）',
+      diagText.includes('解析域名') && diagText.includes('TCP 连接') && diagText.includes('HTTPS 请求')
+    )
+    check('诊断面板：带出队列里的错误文案', diagText.includes('API Key 无效'), diagText.slice(-160))
+
+    await page.click('#copy-diagnostics')
+    await page.waitForSelector('#toast:not([hidden])')
+    checkEqual('复制诊断信息有提示', (await page.textContent('#toast')).trim(), '诊断信息已复制')
+
+    // --- 7. 没有未捕获异常 ---------------------------------------------------
     check('页面无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '))
   } catch (error) {
     // 失败时把现场打出来：这类「界面没反应」的问题只看异常栈是查不出来的。

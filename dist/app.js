@@ -41,6 +41,8 @@ const dom = {
   settingsHint: document.querySelector('#settings-hint'),
   diagnostics: document.querySelector('#diagnostics'),
   diagnosticsOut: document.querySelector('#diagnostics-out'),
+  runProbe: document.querySelector('#run-probe'),
+  copyDiagnostics: document.querySelector('#copy-diagnostics'),
   toast: document.querySelector('#toast')
 }
 
@@ -411,25 +413,86 @@ async function onSubmitSettings(event) {
 }
 
 // ---------------------------------------------------------------------------
-// 诊断
+// 诊断与网络自检
 // ---------------------------------------------------------------------------
 
-async function runDiagnostics() {
+// 设计意图：真机出问题时用户拿不到 adb/logcat，所以这里必须能自己说清问题。
+// 上传失败 → 先跑「网络自检」定位到 DNS / TCP / TLS 哪一层 → 再一键复制全部信息。
+let pathsInfo = null
+let probeReport = null
+
+async function refreshPathsInfo() {
   try {
-    const info = await transport.debugPaths()
-    const check = validateConfig(state.config)
-    dom.diagnosticsOut.textContent = [
-      `运行环境：${transportLabel(transport)}`,
-      `缓存目录：${info.cacheDir}`,
-      `数据目录：${info.dataDir}`,
-      `分享队列文件：${info.pendingSharePath}`,
-      `队列文件存在：${info.pendingShareExists ? '是' : '否'}`,
-      `凭据：${check.ok ? `已配置（${check.channel}）` : '未配置'}`,
-      `队列中待上传：${queue.length} 张`,
-      `历史记录：${state.history.length} 条`
-    ].join('\n')
+    pathsInfo = await transport.debugPaths()
   } catch (error) {
-    dom.diagnosticsOut.textContent = `诊断失败：${error?.message ?? error}`
+    pathsInfo = { error: error?.message ?? String(error) }
+  }
+  renderDiagnostics()
+}
+
+function diagnosticsText() {
+  const lines = [`运行环境：${transportLabel(transport)}`]
+
+  if (pathsInfo?.error) {
+    lines.push(`读取路径失败：${pathsInfo.error}`)
+  } else if (pathsInfo) {
+    lines.push(`缓存目录：${pathsInfo.cacheDir}`)
+    lines.push(`数据目录：${pathsInfo.dataDir}`)
+    lines.push(`分享队列文件：${pathsInfo.pendingSharePath}（${pathsInfo.pendingShareExists ? '存在' : '不存在'}）`)
+  }
+
+  const check = validateConfig(state.config)
+  lines.push(`凭据：${check.ok ? `已配置（${check.channel}）` : '未配置'}`)
+  lines.push(`API 域名：${state.config.apiHost || '(默认)'}`)
+  lines.push(`CDN 域名：${state.config.cdnHost || '(默认)'}`)
+
+  lines.push(`待上传队列：${queue.length} 张`)
+  for (const item of queue) {
+    lines.push(`  · ${item.name}｜${item.status}｜${item.error || '无错误'}`)
+  }
+  lines.push(`历史记录：${state.history.length} 条`)
+
+  if (probeReport) {
+    lines.push('')
+    lines.push(`网络自检 ${probeReport.target}：${probeReport.ok ? '全部通过' : '有失败项'}`)
+    for (const probe of probeReport.steps) {
+      lines.push(`  ${probe.ok ? '✓' : '✗'} ${probe.name} —— ${probe.detail}`)
+    }
+  } else {
+    lines.push('')
+    lines.push('（还没跑过网络自检，上传失败时先点「网络自检」）')
+  }
+
+  return lines.join('\n')
+}
+
+function renderDiagnostics() {
+  dom.diagnosticsOut.textContent = diagnosticsText()
+}
+
+async function runProbe() {
+  // 用表单里的当前值而不是已保存值：用户可能刚改了域名还没保存。
+  const url = dom.settingsForm.apiHost.value.trim() || 'https://tutu.to'
+  dom.diagnosticsOut.textContent = `正在自检 ${url} …（DNS → TCP → HTTPS，最长约半分钟）`
+
+  try {
+    probeReport = await transport.probeHost(url)
+  } catch (error) {
+    probeReport = {
+      target: url,
+      ok: false,
+      steps: [{ name: '自检调用失败', ok: false, detail: error?.message ?? String(error) }]
+    }
+  }
+  renderDiagnostics()
+}
+
+async function copyDiagnostics() {
+  try {
+    await transport.copyText(diagnosticsText())
+    showToast('诊断信息已复制')
+  } catch (error) {
+    showToast(`复制失败：${error?.message ?? error}，可长按下方文字手动复制`, 'warn')
   }
 }
 
@@ -461,8 +524,11 @@ async function init() {
     updateSettingsHint()
   })
   dom.diagnostics.addEventListener('toggle', () => {
-    if (dom.diagnostics.open) runDiagnostics()
+    if (dom.diagnostics.open && !pathsInfo) refreshPathsInfo()
+    else renderDiagnostics()
   })
+  dom.runProbe.addEventListener('click', runProbe)
+  dom.copyDiagnostics.addEventListener('click', copyDiagnostics)
 
   await refreshPendingShare()
 

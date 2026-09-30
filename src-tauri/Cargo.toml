@@ -20,7 +20,19 @@ tauri = { version = "2", features = [] }
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# 默认 TLS 在 reqwest 0.13 里就是 rustls（default-tls -> rustls），
-# 不能改成 native-tls —— 那在 Android 上要 OpenSSL，交叉编译不过。
-reqwest = { version = "0.13", features = ["multipart"] }
+# 钉在 0.12 而不是 0.13：这是真机上踩出来的。
+#
+# 0.13 把 rustls 变成了默认后端，而它的 `rustls` 特性依赖 `rustls-platform-verifier`
+# —— 这个 crate 在 Android 上要靠 JVM 校验系统证书库，官方 README 明确要求打包时
+# 「额外加入一个小的 Kotlin 组件」。Tauri 生成的 Android 工程没有它，于是证书校验
+# 失败，表现为 TLS 阶段直接断掉，而 reqwest 只报一句
+# `error sending request for url (...)`，看不出是 TLS 问题。
+#
+# 0.12 的 `rustls-tls` = `rustls-tls-webpki-roots` + ring provider：用**内置的
+# Mozilla 根证书**，不依赖平台校验器，Android 上开箱可用。
+# 代价是不采用系统/用户自装证书，对普通站点（tutu.to）没有影响。
+# 注意必须关掉 default features —— 0.12 的默认 TLS 是 native-tls，在 Android 上要 OpenSSL。
+reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls", "charset", "http2"] }
 base64 = "0.22"
+# 自检命令要正确拆出 host/port，用手写解析容易在畸形 URL 上出错。
+url = "2"

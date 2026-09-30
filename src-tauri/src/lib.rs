@@ -7,7 +7,9 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
+use std::time::Duration;
 use tauri::Manager;
 
 /// Kotlin 侧写入的分享队列文件名，双方都以此约定同一个目录（cacheDir）。
@@ -16,6 +18,57 @@ const STATE_FILE: &str = "state.json";
 
 /// 预览用的最大字节数。超过就不给缩略图，避免把几十 MB 的图 base64 进内存再塞给 WebView。
 const MAX_PREVIEW_BYTES: usize = 12 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// 错误描述
+// ---------------------------------------------------------------------------
+
+/// 把错误链展开成一句话。
+///
+/// 必须展开：reqwest 对传输层失败只会说
+/// `error sending request for url (https://...)`，
+/// 真正的原因（DNS 解析不了 / TLS 握手失败 / 连接被拒 / 超时）在 `source()` 链里。
+/// 不展开就等于把唯一有用的信息丢掉 —— 真机上只能看到一句无用的话。
+fn describe_error(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![error.to_string()];
+    let mut current = error.source();
+
+    while let Some(source) = current {
+        let text = source.to_string();
+        if !parts.contains(&text) {
+            parts.push(text);
+        }
+        current = source.source();
+    }
+
+    parts.join(" ← ")
+}
+
+fn describe_reqwest(error: &reqwest::Error) -> String {
+    let mut hints: Vec<&str> = Vec::new();
+    if error.is_timeout() {
+        hints.push("超时");
+    }
+    if error.is_connect() {
+        hints.push("连接阶段失败");
+    }
+    if error.is_request() {
+        hints.push("发送/接收请求失败");
+    }
+    if error.is_body() {
+        hints.push("响应体读取失败");
+    }
+    if error.is_decode() {
+        hints.push("响应解析失败");
+    }
+
+    let hint = if hints.is_empty() {
+        String::new()
+    } else {
+        format!("［{}］", hints.join("、"))
+    };
+    format!("{hint}{}", describe_error(error))
+}
 
 // ---------------------------------------------------------------------------
 // 传输层
@@ -87,11 +140,9 @@ async fn send_multipart(request: MultipartRequest) -> Result<MultipartResponse, 
     form = form.part(request.file.name.clone(), part);
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(
-            request.timeout_ms.unwrap_or(120_000),
-        ))
+        .timeout(Duration::from_millis(request.timeout_ms.unwrap_or(120_000)))
         .build()
-        .map_err(|e| format!("HTTP 客户端初始化失败：{e}"))?;
+        .map_err(|e| format!("HTTP 客户端初始化失败：{}", describe_reqwest(&e)))?;
 
     let mut builder = client.post(request.url.as_str()).multipart(form);
     for (name, value) in &request.headers {
@@ -101,7 +152,7 @@ async fn send_multipart(request: MultipartRequest) -> Result<MultipartResponse, 
     let response = builder
         .send()
         .await
-        .map_err(|e| format!("请求 {} 失败：{e}", request.url))?;
+        .map_err(|e| format!("请求 {} 失败：{}", request.url, describe_reqwest(&e)))?;
 
     // 这里**不**把 HTTP 错误状态当成 Rust 错误：tutu 的错误信息在响应体里，
     // 状态码和响应体要一起交给 JS 去解读（错误码映射都在那边）。
@@ -109,9 +160,116 @@ async fn send_multipart(request: MultipartRequest) -> Result<MultipartResponse, 
     let raw_body = response
         .text()
         .await
-        .map_err(|e| format!("读取响应内容失败：{e}"))?;
+        .map_err(|e| format!("读取响应内容失败：{}", describe_reqwest(&e)))?;
 
     Ok(MultipartResponse { status, raw_body })
+}
+
+// ---------------------------------------------------------------------------
+// 网络自检
+// ---------------------------------------------------------------------------
+
+// 真机出问题时最怕「只知道失败、不知道失败在哪一层」。DNS / TCP / HTTPS 分三步测，
+// 每步各自报告结果，就能一次定位是解析不了、连不上，还是 TLS/HTTP 层的问题。
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeStep {
+    name: String,
+    ok: bool,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeReport {
+    target: String,
+    ok: bool,
+    steps: Vec<ProbeStep>,
+}
+
+fn step(name: &str, result: Result<String, String>) -> ProbeStep {
+    match result {
+        Ok(detail) => ProbeStep {
+            name: name.to_string(),
+            ok: true,
+            detail,
+        },
+        Err(detail) => ProbeStep {
+            name: name.to_string(),
+            ok: false,
+            detail,
+        },
+    }
+}
+
+#[tauri::command]
+async fn probe_host(url: String, timeout_ms: Option<u64>) -> Result<ProbeReport, String> {
+    let parsed = url::Url::parse(&url).map_err(|e| format!("URL 无法解析（{url}）：{e}"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| format!("URL 里没有主机名：{url}"))?
+        .to_string();
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(20_000));
+
+    let mut steps = Vec::new();
+
+    // 1) 域名解析（阻塞调用，丢给阻塞线程池）
+    let dns = {
+        let host = host.clone();
+        tauri::async_runtime::spawn_blocking(move || match (host.as_str(), port).to_socket_addrs() {
+            Ok(addrs) => {
+                let list: Vec<String> = addrs.map(|a| a.to_string()).collect();
+                if list.is_empty() {
+                    Err("没有解析到任何地址".to_string())
+                } else {
+                    Ok(list.join(", "))
+                }
+            }
+            Err(e) => Err(describe_error(&e)),
+        })
+        .await
+        .map_err(|e| format!("DNS 检查任务失败：{e}"))?
+    };
+    steps.push(step("1. 解析域名", dns));
+
+    // 2) TCP 连接（五秒超时，不含 TLS，用来区分「网络不通」和「TLS/HTTP 有问题」）
+    let tcp = {
+        let host = host.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut addrs = (host.as_str(), port)
+                .to_socket_addrs()
+                .map_err(|e| format!("解析失败：{}", describe_error(&e)))?;
+            let addr = addrs.next().ok_or_else(|| "没有可用地址".to_string())?;
+            match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
+                Ok(_) => Ok(format!("已连通 {addr}")),
+                Err(e) => Err(format!("连接 {addr} 失败：{}", describe_error(&e))),
+            }
+        })
+        .await
+        .map_err(|e| format!("TCP 检查任务失败：{e}"))?
+    };
+    steps.push(step("2. TCP 连接（端口直连，不含 TLS）", tcp));
+
+    // 3) 完整 HTTPS 请求
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| format!("HTTP 客户端初始化失败：{}", describe_reqwest(&e)))?;
+
+    let https = match client.get(parsed).send().await {
+        Ok(response) => Ok(format!("HTTP {}", response.status().as_u16())),
+        Err(e) => Err(describe_reqwest(&e)),
+    };
+    steps.push(step("3. HTTPS 请求", https));
+
+    let ok = steps.iter().all(|s| s.ok);
+    Ok(ProbeReport {
+        target: url,
+        ok,
+        steps,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +419,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .invoke_handler(tauri::generate_handler![
             send_multipart,
+            probe_host,
             take_pending_share,
             read_file_data_url,
             read_state,

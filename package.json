@@ -1,6 +1,6 @@
 {
   "name": "picgo-tutu",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "分享一张图片给这个 App，它上传到 TUTU 并自动复制直链",
   "type": "module",

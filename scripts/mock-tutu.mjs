@@ -103,6 +103,13 @@ function createHandler(record) {
       response.end(JSON.stringify(payload))
     }
 
+    // 根路径给个正常响应：网络自检会打这里，回 404 会在浏览器控制台留下
+    // "Failed to load resource: 404"，被端到端测试当成页面异常。
+    if (request.url === '/' || request.url === '') {
+      json({ service: 'mock-tutu', hint: '把「API 域名」填成本地址即可' })
+      return
+    }
+
     if (request.url?.startsWith('/api/2/upload')) {
       if (parsed.fields.key === 'bad') {
         json({ error: { code: 230, message: 'Invalid API key' } })

@@ -87,6 +87,11 @@ const nativeTransport = {
 
   async debugPaths() {
     return await invoke('debug_paths')
+  },
+
+  /** 分三步测 DNS / TCP / HTTPS，返回每一步的结果。 */
+  async probeHost(url) {
+    return await invoke('probe_host', { url })
   }
 }
 
@@ -140,6 +145,19 @@ const webTransport = {
       pendingSharePath: '(浏览器调试模式，用 ?devShare=<url> 模拟分享)',
       pendingShareExists: devShareFiles().length > 0
     }
+  },
+
+  /** 浏览器里只能做一层：DNS/TCP 拿不到，直接试 fetch。 */
+  async probeHost(url) {
+    const steps = [{ name: '1. 解析域名', ok: false, detail: '浏览器环境拿不到，仅原生可用' }]
+    steps.push({ name: '2. TCP 连接（端口直连，不含 TLS）', ok: false, detail: '浏览器环境拿不到，仅原生可用' })
+    try {
+      const response = await fetch(url, { method: 'GET', mode: 'no-cors' })
+      steps.push({ name: '3. HTTPS 请求', ok: true, detail: `已发出（no-cors，状态码不可读）type=${response.type}` })
+    } catch (error) {
+      steps.push({ name: '3. HTTPS 请求', ok: false, detail: error?.message ?? String(error) })
+    }
+    return { target: url, ok: steps.every((s) => s.ok), steps }
   }
 }
 

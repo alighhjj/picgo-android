@@ -98,7 +98,15 @@
         <pre id="settings-hint" class="hint"></pre>
 
         <details id="diagnostics">
-          <summary>诊断</summary>
+          <summary>诊断与网络自检</summary>
+          <p class="hint">
+            上传失败时先点「网络自检」：它分三步测（解析域名 → TCP 直连端口 → 完整 HTTPS），
+            能直接看出是网络不通还是 TLS/HTTP 层的问题。再点「复制全部诊断信息」把结果发出去。
+          </p>
+          <div class="actions">
+            <button id="run-probe" type="button">网络自检</button>
+            <button id="copy-diagnostics" type="button" class="ghost">复制全部诊断信息</button>
+          </div>
           <pre id="diagnostics-out" class="hint"></pre>
         </details>
       </section>
