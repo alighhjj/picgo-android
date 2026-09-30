@@ -157,7 +157,64 @@ async function main() {
     await page.waitForSelector('#toast:not([hidden])')
     checkEqual('复制诊断信息有提示', (await page.textContent('#toast')).trim(), '诊断信息已复制')
 
-    // --- 7. 没有未捕获异常 ---------------------------------------------------
+    // --- 7. 布局：预览必须固定尺寸，不能随原图长宽比与像素变化 ----------------
+    // 这条是为一个真实 bug 加的回归测试：队列卡片里的 <img> 曾经没有约束尺寸，
+    // 图片按原图大小撑开卡片、压到下面的操作栏上，表现为「页面随图片大小变、还重叠」。
+    await page.goto(`${web.url}/?devShare=/__test/share-large.png`)
+    await page.click('[data-tab="upload"]')
+    await page.waitForSelector('#queue .thumb img', { timeout: 15000 })
+    await page.waitForFunction(() => {
+      const img = document.querySelector('#queue .thumb img')
+      return img && img.complete && img.naturalWidth > 0
+    })
+
+    const naturalWidth = await page.evaluate(
+      () => document.querySelector('#queue .thumb img').naturalWidth
+    )
+    check('测试原图确实是大图（保证下面几条断言有意义）', naturalWidth >= 1000, `原图宽 ${naturalWidth}`)
+
+    // 量的是 <img> 自己而不是外层 .thumb 盒子：`overflow: hidden` 会让盒子恒为 64x64，
+    // 量盒子永远通过，抓不到「图片按原图尺寸渲染」这个真正的症状。
+    const imageBox = await page.locator('#queue .thumb img').first().boundingBox()
+    check(
+      '预览图渲染尺寸被约束住（不按原图尺寸渲染）',
+      imageBox.width <= 70 && imageBox.height <= 70,
+      `实际 ${Math.round(imageBox.width)}x${Math.round(imageBox.height)}`
+    )
+
+    const thumbBox = await page.locator('#queue .thumb').first().boundingBox()
+    check(
+      '缩略图容器是固定尺寸',
+      thumbBox.width <= 70 && thumbBox.height <= 70,
+      `实际 ${Math.round(thumbBox.width)}x${Math.round(thumbBox.height)}`
+    )
+
+    const cardBox = await page.locator('#queue .card').first().boundingBox()
+    check('卡片高度不被原图撑开', cardBox.height <= 170, `卡高 ${Math.round(cardBox.height)}px`)
+
+    const overflowX = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth
+    )
+    check('页面没有横向溢出', overflowX <= 0, `溢出 ${overflowX}px`)
+
+    // 常驻的「开始上传」已移除，改成条目自己的按钮（此时 key=bad，应为「重试」）。
+    checkEqual('上传页不再有常驻的「开始上传」按钮', await page.locator('#upload-all').count(), 0)
+
+    const retryLabel = await page.textContent('#queue .card[data-status="error"] button')
+    checkEqual('失败条目上有「重试」按钮', retryLabel.trim(), '重试')
+
+    const requestsBefore = mock.record.length
+    await page.click('#queue .card[data-status="error"] button')
+    for (let i = 0; i < 30 && mock.record.length === requestsBefore; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    check(
+      '点「重试」会真的再发一次请求',
+      mock.record.length > requestsBefore,
+      `请求数 ${requestsBefore} → ${mock.record.length}`
+    )
+
+    // --- 8. 没有未捕获异常 ---------------------------------------------------
     check('页面无 JS 异常', pageErrors.length === 0, pageErrors.join(' | '))
   } catch (error) {
     // 失败时把现场打出来：这类「界面没反应」的问题只看异常栈是查不出来的。

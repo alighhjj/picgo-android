@@ -41,8 +41,10 @@ export function startStaticServer({ port = 5173 } = {}) {
       return
     }
 
-    if (url.pathname === '/__test/share.png') {
-      const png = await readFile(join(FIXTURES, 'dev-share.png'))
+    if (url.pathname === '/__test/share.png' || url.pathname === '/__test/share-large.png') {
+      // 大图专门用来验布局：预览若没约束尺寸，它会把卡片撑变形。
+      const name = url.pathname.endsWith('share-large.png') ? 'dev-share-large.png' : 'dev-share.png'
+      const png = await readFile(join(FIXTURES, name))
       response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' })
       response.end(png)
       return

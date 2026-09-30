@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <title>PicGo Tutu</title>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -34,9 +37,10 @@
           从相册分享一张图片进来，它就会出现在这里。
         </div>
 
-        <div class="actions sticky">
-          <button id="upload-all" type="button">开始上传</button>
-          <button id="clear-queue" type="button" class="ghost" hidden>清空</button>
+        <!-- 不放常驻的「开始上传」：分享进来即自动上传，那个按钮是多余的，
+             而且 sticky 会盖住列表末尾的卡片。改为每个条目自己的按钮。 -->
+        <div id="queue-footer" class="queue-footer" hidden>
+          <button id="clear-queue" type="button" class="ghost small">清空列表</button>
         </div>
       </section>
 

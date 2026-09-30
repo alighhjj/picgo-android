@@ -30,7 +30,7 @@ const dom = {
   transport: document.querySelector('#transport-label'),
   queue: document.querySelector('#queue'),
   queueEmpty: document.querySelector('#queue-empty'),
-  uploadAll: document.querySelector('#upload-all'),
+  queueFooter: document.querySelector('#queue-footer'),
   clearQueue: document.querySelector('#clear-queue'),
   resultEmpty: document.querySelector('#result-empty'),
   resultList: document.querySelector('#result-list'),
@@ -90,15 +90,17 @@ async function copyLink(url) {
 
 function renderQueue() {
   dom.queueEmpty.hidden = queue.length > 0
-  dom.uploadAll.disabled = busy || queue.length === 0
-  dom.clearQueue.hidden = queue.length === 0
+  dom.queueFooter.hidden = queue.length === 0
   dom.queue.replaceChildren(...queue.map(renderQueueItem))
 }
 
 function renderQueueItem(item) {
+  const card = document.createElement('div')
+  card.className = 'card'
+  card.dataset.status = item.status
+
   const row = document.createElement('div')
-  row.className = 'card row'
-  row.dataset.status = item.status
+  row.className = 'row'
 
   const thumb = document.createElement('div')
   thumb.className = 'thumb'
@@ -120,9 +122,44 @@ function renderQueueItem(item) {
   status.className = 'sub'
   status.textContent = describeStatus(item)
   meta.append(name, status)
-
   row.append(thumb, meta)
-  return row
+
+  // 按钮放在条目里而不是列表底部：分享进来就自动上传了，常驻的「开始上传」是多余的，
+  // 而且 sticky 的底部栏会盖住列表末尾的卡片。
+  const actions = document.createElement('div')
+  actions.className = 'actions'
+
+  if (item.status === 'done') {
+    const copy = document.createElement('button')
+    copy.type = 'button'
+    copy.textContent = '复制直链'
+    copy.addEventListener('click', () => copyLink(item.url))
+    actions.append(copy)
+  } else {
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.disabled = busy
+    retry.textContent = item.status === 'error' ? '重试' : '上传'
+    retry.addEventListener('click', async () => {
+      if (await uploadOne(item)) switchTab('result')
+    })
+    actions.append(retry)
+  }
+
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.className = 'ghost'
+  remove.disabled = busy
+  remove.textContent = '移除'
+  remove.addEventListener('click', () => {
+    queue = queue.filter((entry) => entry !== item)
+    renderQueue()
+    renderUploadResult()
+  })
+  actions.append(remove)
+
+  card.append(row, actions)
+  return card
 }
 
 function describeStatus(item) {
@@ -191,7 +228,7 @@ async function refreshPendingShare() {
       const added = await enqueue(files)
       switchTab('upload')
       if (added.length > 0 && validateConfig(state.config).ok) {
-        await uploadAll()
+        await uploadQueue()
       }
       return added.length
     }
@@ -200,8 +237,8 @@ async function refreshPendingShare() {
   return 0
 }
 
-async function uploadAll() {
-  if (busy) return
+/** 依次上传队列里所有还没成功的条目。分享进来时会自动调用这个。 */
+async function uploadQueue() {
   const check = validateConfig(state.config)
   if (!check.ok) {
     showToast('先在「设置」里填好凭据', 'warn')
@@ -209,59 +246,74 @@ async function uploadAll() {
     return
   }
 
-  busy = true
-  dom.uploadAll.disabled = true
   let succeeded = 0
-
   for (const item of queue) {
     if (item.status === 'done') continue
+    if (await uploadOne(item)) succeeded += 1
+  }
+  if (succeeded > 0) switchTab('result')
+}
 
-    item.status = 'uploading'
-    item.error = ''
-    item.stage = '正在上传…'
-    renderQueue()
+/**
+ * 上传单个条目，成功返回 true。失败原因直接显示在卡片上
+ * （tutu.js 抛出来的就是给人看的中文说明）。
+ */
+async function uploadOne(item) {
+  if (busy) return false
 
-    try {
-      const result = await uploadImage({
-        transport,
-        config: state.config,
-        file: { path: item.path, name: item.name, mimeType: item.mimeType, size: item.size }
-      })
-
-      item.status = 'done'
-      item.url = result.url
-      item.stage = ''
-      succeeded += 1
-
-      pushHistory(state, {
-        url: result.url,
-        name: item.name,
-        size: item.size,
-        at: Date.now(),
-        channel: result.channel,
-        visibility: result.visibility
-      })
-
-      await copyLink(result.url)
-    } catch (error) {
-      item.status = 'error'
-      item.stage = ''
-      // tutu.js 抛出来的已经是给人看的中文说明，直接用。
-      item.error = error?.message ?? String(error)
-    }
-    renderQueue()
+  const check = validateConfig(state.config)
+  if (!check.ok) {
+    showToast('先在「设置」里填好凭据', 'warn')
+    switchTab('settings')
+    return false
   }
 
-  busy = false
+  busy = true
+  item.status = 'uploading'
+  item.error = ''
+  item.stage = '正在上传…'
+  renderQueue()
+
+  let ok = false
+  try {
+    const result = await uploadImage({
+      transport,
+      config: state.config,
+      file: { path: item.path, name: item.name, mimeType: item.mimeType, size: item.size }
+    })
+
+    item.status = 'done'
+    item.url = result.url
+    ok = true
+
+    pushHistory(state, {
+      url: result.url,
+      name: item.name,
+      size: item.size,
+      at: Date.now(),
+      channel: result.channel,
+      visibility: result.visibility
+    })
+
+    await copyLink(result.url)
+  } catch (error) {
+    item.status = 'error'
+    item.error = error?.message ?? String(error)
+  } finally {
+    item.stage = ''
+    busy = false
+  }
+
   try {
     await saveState(transport, state)
   } catch (error) {
     showToast(`历史保存失败：${error?.message ?? error}`, 'warn')
   }
+
+  renderQueue()
   renderHistory()
   renderUploadResult()
-  renderQueue()
-  if (succeeded > 0) switchTab('result')
+  return ok
 }
 
 function renderUploadResult() {
@@ -512,7 +564,6 @@ async function init() {
   for (const tab of dom.tabs) {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab))
   }
-  dom.uploadAll.addEventListener('click', uploadAll)
   dom.clearQueue.addEventListener('click', () => {
     queue = []
     renderQueue()

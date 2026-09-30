@@ -24,6 +24,13 @@ body {
   color: var(--text);
   font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
   padding-bottom: env(safe-area-inset-bottom);
+  /* 整页不做过滚动回弹，避免看起来像「窗口在动」 */
+  overscroll-behavior-y: none;
+}
+
+/* 兜底：任何图片都不许超出它所在容器，否则原图尺寸会把布局撑变形 */
+img {
+  max-width: 100%;
 }
 
 header {
@@ -112,16 +119,27 @@ main {
   min-width: 0;
 }
 
+/* 预览图必须是固定尺寸的方块：不随原图的长宽比与像素尺寸变化，
+   否则卡片高度会跟着图片变，整个页面布局都会被带着动。 */
 .thumb {
-  width: 46px;
-  height: 46px;
+  width: 64px;
+  height: 64px;
   border-radius: 10px;
-  object-fit: cover;
   background: #10131a;
   display: grid;
   place-items: center;
   flex: none;
+  overflow: hidden;
   font-size: 20px;
+}
+
+/* 内层 img 也要约束住。之前队列卡片漏了这条，图片按原图尺寸撑开，
+   卡片变高并压到下面的操作栏上 —— 用户看到的就是「布局随图片变化且重叠」。 */
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .name {
@@ -154,11 +172,17 @@ main {
   margin-top: 10px;
 }
 
-.actions.sticky {
-  position: sticky;
-  bottom: 0;
-  padding: 12px 0 calc(env(safe-area-inset-bottom) + 12px);
-  background: linear-gradient(transparent, var(--bg) 30%);
+/* 列表底部只有一个小按钮，不再用 sticky 的常驻操作栏（它会盖住卡片）。 */
+.queue-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+button.small {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  font-size: 13px;
 }
 
 button {
