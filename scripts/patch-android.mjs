@@ -224,7 +224,37 @@ console.log(
 )
 
 // ---------------------------------------------------------------------------
-// 6. 记录生成结果（只输出信息，不做断言）
+// 6. 裁掉 debug 包的 native 调试符号
+// ---------------------------------------------------------------------------
+
+// Tauri 生成的 debug 构建类型里写死了 isJniDebuggable = true 且对每个 ABI 声明
+// keepDebugSymbols，于是 AGP 不裁剪 .so —— 两个 ABI 的未裁剪 Rust 调试二进制
+// 让 APK 达到 300MB 量级（实测 318MB），在手机上下载安装都很折磨。
+// 这里关掉它，交给 AGP 正常 strip。崩溃栈会少一些符号，但这是可接受的取舍。
+{
+  const debugBlockRe = /^( {8})getByName\("debug"\)\s*\{[\s\S]*?^\1\}/m
+  const blockMatch = appGradle.match(debugBlockRe)
+
+  if (!blockMatch) {
+    console.log('[patch-android] • 找不到 debug 构建块，跳过符号裁剪（不影响可安装性）')
+  } else {
+    const originalBlock = blockMatch[0]
+    const trimmedBlock = originalBlock
+      .replace(/^[ \t]*jniLibs\.keepDebugSymbols\.add\([^\n]*\)[ \t]*\r?\n/gm, '')
+      .replace(/isJniDebuggable\s*=\s*true/, 'isJniDebuggable = false')
+
+    if (trimmedBlock === originalBlock) {
+      console.log('[patch-android] • debug 块里没有可裁剪的符号配置（模板可能已经变了）')
+    } else {
+      appGradle = appGradle.replace(originalBlock, trimmedBlock)
+      writeFileSync(appGradlePath, appGradle)
+      console.log('[patch-android] ✓ 已去掉 debug 包的 native 调试符号（APK 体积大幅下降）')
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. 记录生成结果（只输出信息，不做断言）
 // ---------------------------------------------------------------------------
 
 // 这里刻意不校验 tauri_app_lib_name：那是第三方分享插件 README 教用户手工加的属性，
