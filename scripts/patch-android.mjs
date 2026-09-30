@@ -172,35 +172,56 @@ const copiedIcons = copyTree(iconsSource, resDir)
 console.log(`[patch-android] ✓ 注入 ${copiedIcons} 个应用图标文件`)
 
 // ---------------------------------------------------------------------------
-// 5. 钉死 NDK 版本
+// 5. 钉死 compileSdk / targetSdk / ndkVersion
 // ---------------------------------------------------------------------------
 
-// Tauri 生成的 app/build.gradle.kts 不写 ndkVersion，于是 AGP 会挑一个它自己的默认值；
-// 那个值不一定等于 CI 装的那个，报错是 "NDK at ... did not have a source.properties file"。
-// 这里显式钉死，让「CI 安装的」与「AGP 要求的」必然一致。
+// 为什么要钉：
+// 1) API 37 目前**没有** `platforms;android-37` 这个包 —— Android 改成带 minor 的
+//    版本号后，仓库里只有 android-37.0 / 37.1 / 37.2，而 AGP 找的是 android-37。
+//    Tauri 2.12 生成的工程写的是 compileSdk = 37，直接用装不上平台。
+//    钉到 36（当前稳定且能装）即可，这个应用的代码只用老 API，不依赖 37 的任何特性。
+// 2) 不写 ndkVersion 时 AGP 会挑一个自己的默认值，未必等于 CI 装的那个，报错是
+//    "NDK at ... did not have a source.properties file"。
 //
-// NDK_VERSION 由 workflow 传入（两边共用一个值）；这里的默认值只是在本地手动跑时的兜底。
+// 三个值都由环境变量传入（workflow 与这里共用一个来源），默认值只用于本地手动跑。
+const compileSdk = process.env.ANDROID_COMPILE_SDK || '36'
+const targetSdk = process.env.ANDROID_TARGET_SDK || '36'
 const ndkVersion = process.env.NDK_VERSION || '27.2.12479018'
 const appGradlePath = join(GEN_ANDROID, 'app', 'build.gradle.kts')
 
 if (!existsSync(appGradlePath)) fail(`找不到 ${appGradlePath}`)
 
+const compileSdkRe = /^(\s*)compileSdk\s*=.*$/m
+const targetSdkRe = /^(\s*)targetSdk\s*=.*$/m
+const ndkRe = /^\s*ndkVersion\s*=.*$/m
+
 let appGradle = readFileSync(appGradlePath, 'utf8')
-if (/^\s*ndkVersion\s*=/m.test(appGradle)) {
-  console.log('[patch-android] • gradle 里已指定 ndkVersion，跳过')
-} else {
-  const compileSdkLine = /^(\s*)compileSdk\s*=.*$/m
-  if (!compileSdkLine.test(appGradle)) {
-    fail('app/build.gradle.kts 里找不到 compileSdk 行，无法插入 ndkVersion')
-  }
-  appGradle = appGradle.replace(
-    compileSdkLine,
-    // 用函数式替换时 $1 不会展开，缩进要从参数里取。
-    (line, indent) => `${line}\n${indent}ndkVersion = "${ndkVersion}"`
-  )
-  writeFileSync(appGradlePath, appGradle)
-  console.log(`[patch-android] ✓ 钉死 ndkVersion = ${ndkVersion}`)
+if (!compileSdkRe.test(appGradle)) {
+  fail('app/build.gradle.kts 里找不到 compileSdk 行，模板结构与预期不符')
 }
+
+// 名字与上面 strings.xml 那段的 before 区分开（重名会让整个脚本 SyntaxError）。
+const beforeSdk = {
+  compileSdk: appGradle.match(compileSdkRe)?.[0].trim() ?? '(无)',
+  targetSdk: appGradle.match(targetSdkRe)?.[0].trim() ?? '(无)'
+}
+const hasNdk = ndkRe.test(appGradle)
+
+appGradle = appGradle.replace(compileSdkRe, (line, indent) => {
+  const pinned = `${indent}compileSdk = ${compileSdk}`
+  return hasNdk ? pinned : `${pinned}\n${indent}ndkVersion = "${ndkVersion}"`
+})
+
+if (targetSdkRe.test(appGradle)) {
+  appGradle = appGradle.replace(targetSdkRe, (_line, indent) => `${indent}targetSdk = ${targetSdk}`)
+}
+
+writeFileSync(appGradlePath, appGradle)
+console.log(`[patch-android] ✓ SDK 版本：${beforeSdk.compileSdk} → compileSdk = ${compileSdk}`)
+console.log(`[patch-android] ✓ SDK 版本：${beforeSdk.targetSdk} → targetSdk = ${targetSdk}`)
+console.log(
+  `[patch-android] ${hasNdk ? '•' : '✓'} ndkVersion = ${ndkVersion}${hasNdk ? '（已存在，未改动）' : ''}`
+)
 
 // ---------------------------------------------------------------------------
 // 6. 记录生成结果（只输出信息，不做断言）

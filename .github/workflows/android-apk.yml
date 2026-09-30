@@ -17,8 +17,14 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     env:
-      # 固定 NDK 版本：AGP 在未显式指定时会自己挑一个默认版本，两边对不上就报
-      # “NDK did not have a source.properties file”。这里显式安装并显式传入。
+      # 这三个值同时被 scripts/patch-android.mjs 使用（它读同名环境变量），
+      # 保证「CI 装的 SDK/NDK」与「gradle 要求的」必然一致。
+      #
+      # 为什么是 36 而不是模板默认的 37：目前仓库里**没有** platforms;android-37
+      # 这个包（Android 改成带 minor 的版本号后只有 android-37.0/37.1/37.2，
+      # 而 AGP 找的是 android-37）。36 是当前稳定且能装的版本。
+      ANDROID_COMPILE_SDK: 36
+      ANDROID_TARGET_SDK: 36
       NDK_VERSION: 27.2.12479018
 
     steps:
@@ -77,13 +83,13 @@ jobs:
 
           # 逐包安装、单个失败不中断：个别包名在某些仓库快照里可能不存在，
           # 不该因此让整个步骤挂掉。真正必需的两个包在下面硬校验。
-          # 平台版本必须跟着 tauri android init 生成的结果走 —— 2.12 生成的是
-          # compileSdk 37，所以这里装 android-37（实测日志里确认过）。
+          # 37.0 只是顺手尝试（AGP 要的是 android-37，装上了也未必认），
+          # 真正生效的是 patch-android.mjs 把 compileSdk 钉到 36。
           for pkg in \
             "platform-tools" \
-            "platforms;android-37" \
             "platforms;android-36" \
             "build-tools;36.0.0" \
+            "platforms;android-37.0" \
             "build-tools;37.0.0" \
             "ndk;27.2.12479018"
           do
@@ -91,15 +97,17 @@ jobs:
             "$SDKMGR" --sdk_root="$SDK" --install "$pkg" || echo "::warning::$pkg 安装失败，继续"
           done
 
+          echo "== 已安装的平台："; ls "$SDK/platforms" || true
+          echo "== 已安装的 build-tools："; ls "$SDK/build-tools" || true
+          echo "== 已安装的 NDK："; ls "$SDK/ndk" || true
+
           # 硬校验：缺这两个后面必然编译失败，早点报清楚。
-          test -d "$SDK/platforms/android-37" || {
-            echo "::error::缺少 android-37 平台（生成的工程 compileSdk=37）"
-            ls "$SDK/platforms" || true
+          test -d "$SDK/platforms/android-$ANDROID_COMPILE_SDK" || {
+            echo "::error::缺少 android-$ANDROID_COMPILE_SDK 平台"
             exit 1
           }
-          test -d "$SDK/ndk/27.2.12479018" || {
-            echo "::error::缺少 NDK 27.2.12479018"
-            ls "$SDK/ndk" || true
+          test -d "$SDK/ndk/$NDK_VERSION" || {
+            echo "::error::缺少 NDK $NDK_VERSION"
             exit 1
           }
 
