@@ -50,18 +50,46 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      # setup-android 只接受 `packages` 这一个安装入口（没有 api-level / ndk-version 参数），
-      # 包名直接透传给 sdkmanager。平台装 35 与 36 两套，避免 CLI 生成的工程换
-      # compileSdk 时又要重跑一轮。
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platform-tools
-            platforms;android-35
-            platforms;android-36
-            build-tools;35.0.0
-            build-tools;36.0.0
-            ndk;27.2.12479018
+      # 不用 android-actions/setup-android：它的许可接受步骤会去跑交互式的
+      # `sdkmanager --licenses`，在新版 cmdline-tools 上直接以退出码 1 失败
+      # （“6 of 7 SDK package licenses not accepted”）。这里自己装，步骤可见、错误可查。
+      - name: 准备 Android SDK 组件
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "SDK 目录：$SDK"
+          test -d "$SDK" || { echo "::error::runner 上没有 Android SDK"; exit 1; }
+
+          # 无条件换成固定版本的 cmdline-tools：runner 自带的那份是 12.0，比较老，
+          # 解析新版仓库元数据可能失败。固定版本才能让这一步的结果可预期。
+          echo "安装固定版本的 cmdline-tools…"
+          curl -fsSL -o /tmp/cmdtools.zip \
+            "https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip"
+          rm -rf /tmp/cmdtools "$SDK/cmdline-tools/latest"
+          mkdir -p /tmp/cmdtools "$SDK/cmdline-tools/latest"
+          unzip -q -o /tmp/cmdtools.zip -d /tmp/cmdtools
+          mv /tmp/cmdtools/cmdline-tools/* "$SDK/cmdline-tools/latest/"
+
+          SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMGR" --version
+
+          # 许可必须显式接受；用 yes 管道喂进去，失败不致命，真正的门禁是下面这步安装。
+          yes | "$SDKMGR" --sdk_root="$SDK" --licenses > /dev/null 2>&1 || true
+
+          # 平台装 35 与 36 两套：CLI 生成的工程 compileSdk 可能是其中之一，
+          # 先都装上，免得换个版本又要重跑一轮。
+          "$SDKMGR" --sdk_root="$SDK" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018"
+
+          # 让后续步骤用上刚装的工具。
+          echo "$SDK/platform-tools"           >> "$GITHUB_PATH"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_SDK_ROOT=$SDK"         >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK"             >> "$GITHUB_ENV"
 
       # Tauri 的 rust gradle 插件要找 NDK。SDK 路径不能写死：ubuntu runner 自带一份
       # Android SDK，setup-android 会把包装进那一份，所以这里从环境变量反查真实路径，
