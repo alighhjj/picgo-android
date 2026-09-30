@@ -1,0 +1,14 @@
+# Node
+node_modules/
+
+# Rust
+/src-tauri/target/
+
+# Tauri 生成物（含 gen/android，由 CI 的 tauri android init 生成）
+/src-tauri/gen/
+
+# 本地构建与调试
+/tmp/
+*.log
+.DS_Store
+Thumbs.db
