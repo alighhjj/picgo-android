@@ -254,7 +254,59 @@ console.log(
 }
 
 // ---------------------------------------------------------------------------
-// 7. 记录生成结果（只输出信息，不做断言）
+// 7. 注入 release 签名配置
+// ---------------------------------------------------------------------------
+
+// release 包必须签名才能安装，否则 gradle 只会产出 app-universal-release-unsigned.apk，
+// 用户下载到的是一个装不上的包 —— 这种失败很难看出来，所以下面锚点不匹配就直接报错。
+//
+// keystore.properties 由 CI 在构建前写入（里面有密码，不进仓库）。这里刻意用
+// 文件存在性做判断而不是无条件读取：
+//   - 推 main 只出 debug 包，没有 keystore.properties，签名配置保持为空即可；
+//   - 打 tag 时才有 keystore.properties，release 包会被真正签名。
+// 用 keystorePropertiesFile.inputStream() 而不是 FileInputStream，省掉一个 import。
+{
+  const signingConfigsBlock = `    signingConfigs {
+        create("release") {
+            val keystorePropertiesFile = rootProject.file("keystore.properties")
+            if (keystorePropertiesFile.exists()) {
+                val keystoreProperties = Properties()
+                keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["password"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["password"] as String
+            }
+        }
+    }
+
+`
+
+  const buildTypesRe = /^( {4})buildTypes\s*\{/m
+  const releaseBlockRe = /^( {8})getByName\("release"\)\s*\{[ \t]*\r?\n/m
+
+  if (/signingConfigs\s*\{/.test(appGradle)) {
+    console.log('[patch-android] • gradle 里已有 signingConfigs，跳过')
+  } else if (!buildTypesRe.test(appGradle)) {
+    fail('app/build.gradle.kts 里找不到 buildTypes 块，无法注入签名配置')
+  } else {
+    appGradle = appGradle.replace(buildTypesRe, (line) => `${signingConfigsBlock}${line}`)
+
+    if (!releaseBlockRe.test(appGradle)) {
+      fail('找不到 release 构建块，无法挂上签名配置（会导致产物未签名、装不上）')
+    }
+    appGradle = appGradle.replace(
+      releaseBlockRe,
+      (line, indent) => `${line}${indent}    signingConfig = signingConfigs.getByName("release")\n`
+    )
+
+    writeFileSync(appGradlePath, appGradle)
+    console.log('[patch-android] ✓ 已注入 release 签名配置（无 keystore.properties 时自动留空）')
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. 记录生成结果（只输出信息，不做断言）
 // ---------------------------------------------------------------------------
 
 // 这里刻意不校验 tauri_app_lib_name：那是第三方分享插件 README 教用户手工加的属性，

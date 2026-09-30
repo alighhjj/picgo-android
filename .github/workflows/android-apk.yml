@@ -3,6 +3,11 @@ name: 构建 Android APK
 # 本机没有 Rust、没有 JDK 21、没有 Android SDK，所以编译与出包全部由这里负责。
 # 注意：`tauri android init` 内部会跑 `cargo metadata`，因此它必须和 Rust 工具链一起
 # 在这个 workflow 里执行，而 gen/android 不进仓库。
+#
+# 产物策略（刻意分开，避免每次推都跑双份构建）：
+#   - 推 main       → 只出 debug APK（快，用来验证代码能编译）
+#   - 推 v* tag     → 只出签名 release APK（体积小、运行快，挂到 Release）
+# debug 包保留完整调试能力，release 包走签名 + 精简，两者签名不同不能互相覆盖安装。
 
 on:
   push:
@@ -147,23 +152,57 @@ jobs:
         run: |
           grep -E "compileSdk|minSdk|targetSdk|ndkVersion|applicationId" \
             src-tauri/gen/android/app/build.gradle.kts || true
-          grep -E "tauri_app_lib_name" src-tauri/gen/android/gradle.properties || true
+          grep -cE "signingConfig" src-tauri/gen/android/app/build.gradle.kts || true
 
-      # 只出 arm64 与 armv7：这两者覆盖全部真实手机，同时跳过没人用的 x86 模拟器 ABI，
-      # 直接省掉一半 Rust 编译时间。产物是一个通用 APK。
-      - name: 构建 debug APK
+      # 只有打 tag 才签 release 包。keystore 与密码来自仓库 Secrets，
+      # 通过环境变量传给脚本（不把 secret 直接插进 run 的脚本文本里）。
+      - name: 写入签名配置（仅 tag）
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEY_BASE64" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+            echo "::error::缺少签名相关的 Secrets（ANDROID_KEY_BASE64 / ANDROID_KEY_PASSWORD / ANDROID_KEY_ALIAS），无法产出可安装的 release 包"
+            exit 1
+          fi
+          cd src-tauri/gen/android
+          echo "$KEY_BASE64" | base64 -d > "$RUNNER_TEMP/upload-keystore.jks"
+          test -s "$RUNNER_TEMP/upload-keystore.jks" || { echo "::error::keystore 解码失败"; exit 1; }
+          {
+            echo "keyAlias=$KEY_ALIAS"
+            echo "password=$KEY_PASSWORD"
+            echo "storeFile=$RUNNER_TEMP/upload-keystore.jks"
+          } > keystore.properties
+          echo "已写入 keystore.properties（内容不回显）"
+
+      # 只出 arm64 与 armv7：这两者覆盖全部真实手机，同时跳过没人用的 x86 模拟器 ABI。
+      - name: 构建 debug APK（推 main）
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: npx tauri android build --apk --debug -t aarch64 -t armv7
 
-      - name: 列出产物
-        run: find src-tauri/gen/android/app/build/outputs -name "*.apk" -exec ls -lh {} \;
+      - name: 构建签名 release APK（打 tag）
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npx tauri android build --apk -t aarch64 -t armv7
+
+      - name: 列出产物并检查签名状态
+        run: |
+          find src-tauri/gen/android/app/build/outputs -name "*.apk" -exec ls -lh {} \;
+          # 出现 -unsigned 说明签名没生效 —— 那种包用户装不上，必须当失败处理。
+          if find src-tauri/gen/android/app/build/outputs -name "*-unsigned.apk" | grep -q .; then
+            echo "::error::产物里出现了未签名的 APK，签名配置没有生效"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: picgo-tutu-debug-apk
+          name: picgo-tutu-apk
           if-no-files-found: error
           path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
 
-      # 打 tag 时顺带把 APK 挂到 Release，方便手机上直接下载安装。
+      # 打 tag 时把 APK 挂到 Release：公开仓库的 Release 资产可以直接下载，
+      # 不像 Actions artifact 那样需要登录，方便手机上直接装。
       - name: 附加到 Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
