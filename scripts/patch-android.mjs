@@ -203,17 +203,23 @@ if (/^\s*ndkVersion\s*=/m.test(appGradle)) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. 核对 lib 名（Kotlin 侧要链接 Rust 生成的静态库）
+// 6. 记录生成结果（只输出信息，不做断言）
 // ---------------------------------------------------------------------------
 
+// 这里刻意不校验 tauri_app_lib_name：那是第三方分享插件 README 教用户手工加的属性，
+// `tauri android init` 并不会写它 —— 第一版脚本按这个错误前提做了断言，直接把自己
+// 卡死了。真正决定 Kotlin 能链接到 Rust 静态库的是下面这个 rust 插件，所以只把它
+// 打出来看。
 const gradlePropertiesPath = join(GEN_ANDROID, 'gradle.properties')
 if (existsSync(gradlePropertiesPath)) {
   const properties = readFileSync(gradlePropertiesPath, 'utf8')
-  const match = properties.match(/tauri_app_lib_name=(\S+)/)
-  if (!match) {
-    fail('gradle.properties 里没有 tauri_app_lib_name，Tauri 的生成流程变了？')
-  }
-  console.log(`[patch-android] ✓ tauri_app_lib_name = ${match[1]}`)
+  const libName = properties.match(/tauri_app_lib_name=(\S+)/)
+  console.log(`[patch-android] • gradle.properties 里的 lib 名：${libName ? libName[1] : '(未设置，正常)'}`)
+}
+
+if (existsSync(appGradlePath)) {
+  const appliesRust = /id\(\s*"rust"\s*\)/.test(readFileSync(appGradlePath, 'utf8'))
+  console.log(`[patch-android] • app 模块应用 rust 插件：${appliesRust ? '是' : '否（异常，请检查）'}`)
 }
 
 console.log('[patch-android] 完成')
