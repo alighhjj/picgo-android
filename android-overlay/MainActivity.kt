@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.activity.enableEdgeToEdge
 import org.json.JSONArray
 import org.json.JSONObject
@@ -54,7 +55,7 @@ class MainActivity : TauriActivity() {
     }
 
     if (files.length() == 0) {
-      eprintln("[share] 分享进来的 ${uris.size} 个文件都没能拷进缓存")
+      logW("[share] 分享进来的 ${uris.size} 个文件都没能拷进缓存")
       return
     }
 
@@ -81,14 +82,14 @@ class MainActivity : TauriActivity() {
   private fun copyToCache(uri: Uri, fallbackMime: String?): JSONObject? {
     val mime = contentResolver.getType(uri) ?: fallbackMime ?: "image/jpeg"
     if (!mime.startsWith("image/")) {
-      eprintln("[share] 跳过非图片内容：$mime ($uri)")
+      logW("[share] 跳过非图片内容：$mime ($uri)")
       return null
     }
 
     val displayName = displayName(uri) ?: "shared-${System.currentTimeMillis()}${extensionFor(mime)}"
     val dir = File(cacheDir, "shared")
     if (!dir.exists() && !dir.mkdirs()) {
-      eprintln("[share] 创建缓存目录失败：$dir")
+      logW("[share] 创建缓存目录失败：$dir")
       return null
     }
 
@@ -109,18 +110,18 @@ class MainActivity : TauriActivity() {
               // 边拷边判，避免为了一个超大文件先把磁盘写满。
               output.close()
               target.delete()
-              eprintln("[share] 跳过大文件（>${MAX_FILE_BYTES / 1024 / 1024}MB）：$displayName")
+              logW("[share] 跳过大文件（>${MAX_FILE_BYTES / 1024 / 1024}MB）：$displayName")
               return null
             }
             output.write(buffer, 0, read)
           }
         }
       } ?: run {
-        eprintln("[share] 打不开输入流：$uri")
+        logW("[share] 打不开输入流：$uri")
         return null
       }
     } catch (error: Exception) {
-      eprintln("[share] 拷贝失败（$uri）：$error")
+      logW("[share] 拷贝失败（$uri）：$error")
       target.delete()
       return null
     }
@@ -151,14 +152,14 @@ class MainActivity : TauriActivity() {
         if (existing != null) {
           for (index in 0 until existing.length()) merged.put(existing.get(index))
         }
-      }.onFailure { eprintln("[share] 旧队列解析失败，按空队列处理：$it") }
+      }.onFailure { logW("[share] 旧队列解析失败，按空队列处理：$it") }
     }
 
     for (index in 0 until files.length()) merged.put(files.get(index))
 
     runCatching {
       pending.writeText(JSONObject().put("files", merged).toString())
-    }.onFailure { eprintln("[share] 写入分享队列失败：$it") }
+    }.onFailure { logW("[share] 写入分享队列失败：$it") }
   }
 
   private fun displayName(uri: Uri): String? {
@@ -191,10 +192,17 @@ class MainActivity : TauriActivity() {
       dir.listFiles()?.forEach { file ->
         if (file.isFile && file.lastModified() < cutoff) file.delete()
       }
-    }.onFailure { eprintln("[share] 清理旧缓存失败：$it") }
+    }.onFailure { logW("[share] 清理旧缓存失败：$it") }
+  }
+
+  /** Kotlin 的 eprintln 在 JVM 目标上不存在（编译报 Unresolved reference），
+   *  这里用 Android 原生的 Log，logcat 里按标签过滤即可。 */
+  private fun logW(message: String) {
+    Log.w(TAG, message)
   }
 
   private companion object {
+    const val TAG = "PicgoTutu"
     const val PENDING_FILE_NAME = "pending-share.json"
     const val MAX_FILE_BYTES = 50L * 1024 * 1024
     const val CACHE_TTL_MS = 24L * 60 * 60 * 1000

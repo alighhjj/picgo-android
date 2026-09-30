@@ -75,15 +75,33 @@ jobs:
           # 许可必须显式接受；用 yes 管道喂进去，失败不致命，真正的门禁是下面这步安装。
           yes | "$SDKMGR" --sdk_root="$SDK" --licenses > /dev/null 2>&1 || true
 
-          # 平台装 35 与 36 两套：CLI 生成的工程 compileSdk 可能是其中之一，
-          # 先都装上，免得换个版本又要重跑一轮。
-          "$SDKMGR" --sdk_root="$SDK" --install \
+          # 逐包安装、单个失败不中断：个别包名在某些仓库快照里可能不存在，
+          # 不该因此让整个步骤挂掉。真正必需的两个包在下面硬校验。
+          # 平台版本必须跟着 tauri android init 生成的结果走 —— 2.12 生成的是
+          # compileSdk 37，所以这里装 android-37（实测日志里确认过）。
+          for pkg in \
             "platform-tools" \
-            "platforms;android-35" \
+            "platforms;android-37" \
             "platforms;android-36" \
-            "build-tools;35.0.0" \
             "build-tools;36.0.0" \
+            "build-tools;37.0.0" \
             "ndk;27.2.12479018"
+          do
+            echo "== 安装 $pkg"
+            "$SDKMGR" --sdk_root="$SDK" --install "$pkg" || echo "::warning::$pkg 安装失败，继续"
+          done
+
+          # 硬校验：缺这两个后面必然编译失败，早点报清楚。
+          test -d "$SDK/platforms/android-37" || {
+            echo "::error::缺少 android-37 平台（生成的工程 compileSdk=37）"
+            ls "$SDK/platforms" || true
+            exit 1
+          }
+          test -d "$SDK/ndk/27.2.12479018" || {
+            echo "::error::缺少 NDK 27.2.12479018"
+            ls "$SDK/ndk" || true
+            exit 1
+          }
 
           # 让后续步骤用上刚装的工具。
           echo "$SDK/platform-tools"           >> "$GITHUB_PATH"
