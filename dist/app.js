@@ -32,8 +32,6 @@ const dom = {
   queueEmpty: document.querySelector('#queue-empty'),
   queueFooter: document.querySelector('#queue-footer'),
   clearQueue: document.querySelector('#clear-queue'),
-  resultEmpty: document.querySelector('#result-empty'),
-  resultList: document.querySelector('#result-list'),
   history: document.querySelector('#history'),
   historyEmpty: document.querySelector('#history-empty'),
   historyCount: document.querySelector('#history-count'),
@@ -141,7 +139,7 @@ function renderQueueItem(item) {
     retry.disabled = busy
     retry.textContent = item.status === 'error' ? '重试' : '上传'
     retry.addEventListener('click', async () => {
-      if (await uploadOne(item)) switchTab('result')
+      await uploadOne(item)
     })
     actions.append(retry)
   }
@@ -154,11 +152,22 @@ function renderQueueItem(item) {
   remove.addEventListener('click', () => {
     queue = queue.filter((entry) => entry !== item)
     renderQueue()
-    renderUploadResult()
   })
   actions.append(remove)
 
-  card.append(row, actions)
+  const children = [row]
+  if (item.status === 'done' && item.url) {
+    // 结果就显示在这一条里：不再单独开一个「结果」页签。
+    const link = document.createElement('a')
+    link.className = 'link'
+    link.href = item.url
+    link.target = '_blank'
+    link.rel = 'noreferrer'
+    link.textContent = item.url
+    children.push(link)
+  }
+  children.push(actions)
+  card.append(...children)
   return card
 }
 
@@ -246,12 +255,10 @@ async function uploadQueue() {
     return
   }
 
-  let succeeded = 0
   for (const item of queue) {
     if (item.status === 'done') continue
-    if (await uploadOne(item)) succeeded += 1
+    await uploadOne(item)
   }
-  if (succeeded > 0) switchTab('result')
 }
 
 /**
@@ -312,44 +319,7 @@ async function uploadOne(item) {
 
   renderQueue()
   renderHistory()
-  renderUploadResult()
   return ok
-}
-
-function renderUploadResult() {
-  const done = queue.filter((item) => item.status === 'done')
-  // 只切换「空状态」的显隐，不能去动视图本身的 hidden —— 那是 switchTab 管的，
-  // 两边都写 hidden 会互相覆盖。
-  dom.resultEmpty.hidden = done.length > 0
-  if (done.length === 0) {
-    dom.resultList.replaceChildren()
-    return
-  }
-
-  dom.resultList.replaceChildren(
-    ...done.map((item) => {
-      const card = document.createElement('div')
-      card.className = 'card'
-
-      const link = document.createElement('a')
-      link.className = 'link'
-      link.href = item.url
-      link.target = '_blank'
-      link.rel = 'noreferrer'
-      link.textContent = item.url
-
-      const actions = document.createElement('div')
-      actions.className = 'actions'
-      const copy = document.createElement('button')
-      copy.type = 'button'
-      copy.textContent = '复制直链'
-      copy.addEventListener('click', () => copyLink(item.url))
-      actions.append(copy)
-
-      card.append(link, actions)
-      return card
-    })
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -559,7 +529,6 @@ async function init() {
   renderSettings()
   renderHistory()
   renderQueue()
-  renderUploadResult()
 
   for (const tab of dom.tabs) {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab))
@@ -567,7 +536,6 @@ async function init() {
   dom.clearQueue.addEventListener('click', () => {
     queue = []
     renderQueue()
-    renderUploadResult()
   })
   dom.settingsForm.addEventListener('submit', onSubmitSettings)
   dom.settingsForm.addEventListener('input', () => {

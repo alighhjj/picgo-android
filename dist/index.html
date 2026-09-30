@@ -19,7 +19,6 @@
 
     <nav class="tabs">
       <button type="button" data-tab="upload" class="is-active">上传</button>
-      <button type="button" data-tab="result">结果</button>
       <button type="button" data-tab="history">历史</button>
       <button type="button" data-tab="settings">设置</button>
     </nav>
@@ -27,8 +26,7 @@
     <main>
       <section data-view="upload">
         <p class="hint">
-          在相册或文件管理器里选中图片 →「分享」→ 选「PicGo Tutu」，
-          图片会自动上传，直链自动复制到剪贴板。
+          在相册或文件管理器里选中图片 →「分享」→ 选「PicGo Tutu」，图片会自动上传，直链自动复制到剪贴板。
         </p>
 
         <div id="queue" class="stack"></div>
@@ -42,11 +40,6 @@
         <div id="queue-footer" class="queue-footer" hidden>
           <button id="clear-queue" type="button" class="ghost small">清空列表</button>
         </div>
-      </section>
-
-      <section data-view="result" hidden>
-        <div id="result-list" class="stack"></div>
-        <div id="result-empty" class="empty">这次还没有上传成功的结果。</div>
       </section>
 
       <section data-view="history" hidden>
@@ -99,19 +92,18 @@
           <button type="submit">保存设置</button>
         </form>
 
-        <pre id="settings-hint" class="hint"></pre>
+        <pre id="settings-hint" class="hint hint-lines"></pre>
 
         <details id="diagnostics">
           <summary>诊断与网络自检</summary>
           <p class="hint">
-            上传失败时先点「网络自检」：它分三步测（解析域名 → TCP 直连端口 → 完整 HTTPS），
-            能直接看出是网络不通还是 TLS/HTTP 层的问题。再点「复制全部诊断信息」把结果发出去。
+            上传失败时先点「网络自检」：它分三步测（解析域名 → TCP 直连端口 → 完整 HTTPS），能直接看出是网络不通还是 TLS/HTTP 层的问题。再点「复制全部诊断信息」把结果发出去。
           </p>
           <div class="actions">
             <button id="run-probe" type="button">网络自检</button>
             <button id="copy-diagnostics" type="button" class="ghost">复制全部诊断信息</button>
           </div>
-          <pre id="diagnostics-out" class="hint"></pre>
+          <pre id="diagnostics-out" class="hint hint-lines"></pre>
         </details>
       </section>
     </main>

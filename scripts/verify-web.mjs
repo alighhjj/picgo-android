@@ -69,8 +69,8 @@ async function main() {
 
     // --- 2. 分享进来 → 自动上传 → 直链推导（v2 通道）------------------------
     await page.goto(`${web.url}/?devShare=/__test/share.png`)
-    await page.waitForSelector('#result-list .link', { timeout: 15000 })
-    const v2Link = (await page.textContent('#result-list .link')).trim()
+    await page.waitForSelector('#queue .card[data-status="done"] .link', { timeout: 15000 })
+    const v2Link = (await page.textContent('#queue .card[data-status="done"] .link')).trim()
     check('v2：从 url_viewer 推导出的直链正确', v2Link === 'https://t.tutu.to/img/mock1', `实际 ${v2Link}`)
 
     const v2 = mock.record.at(-1)
@@ -82,6 +82,33 @@ async function main() {
     checkEqual('v2：Content-Type 用系统给的真实 MIME', v2.file?.contentType, 'image/png')
     check('v2：文件确实有内容', (v2.file?.size ?? 0) > 0, `size=${v2.file?.size}`)
     checkEqual('v2：不存在的 anonymousUpload 不该被发出去', v2.fields.anonymousUpload, undefined)
+
+    // 「结果」页签已取消，结果直接体现在上传页条目里
+    checkEqual('「结果」页签已移除', await page.locator('[data-tab="result"]').count(), 0)
+    check(
+      '上传页条目里直接显示直链',
+      (await page.locator('#queue .card[data-status="done"] .link').count()) === 1
+    )
+
+    // 说明文字曾经被 CSS 的 white-space: pre-wrap 把源码换行原样渲染，
+    // 表现为「句子在第一个逗号后凭空断行」。计算样式与渲染行数一起验。
+    const hint = await page.evaluate(() => {
+      const el = document.querySelector('[data-view="upload"] .hint')
+      const style = getComputedStyle(el)
+      return {
+        whiteSpace: style.whiteSpace,
+        contentHeight:
+          el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+        lineHeight: parseFloat(style.lineHeight)
+      }
+    })
+    checkEqual('说明文字不再使用 pre-wrap', hint.whiteSpace, 'normal')
+    const hintLines = Math.round(hint.contentHeight / hint.lineHeight)
+    check(
+      '说明文字没有被源码换行强制断行（宽屏下应为 1 行）',
+      hintLines === 1,
+      `渲染 ${hintLines} 行（内容高 ${hint.contentHeight}px / 行高 ${hint.lineHeight}px）`
+    )
 
     // --- 3. 历史里能查到 -----------------------------------------------------
     await page.click('[data-tab="history"]')
@@ -100,8 +127,8 @@ async function main() {
     await page.waitForSelector('#toast:not([hidden])')
 
     await page.goto(`${web.url}/?devShare=/__test/share.png`)
-    await page.waitForSelector('#result-list .link', { timeout: 15000 })
-    const v3Link = (await page.textContent('#result-list .link')).trim()
+    await page.waitForSelector('#queue .card[data-status="done"] .link', { timeout: 15000 })
+    const v3Link = (await page.textContent('#queue .card[data-status="done"] .link')).trim()
     checkEqual('v3：直接用 img_url', v3Link, 'https://t.tutu.to/img/mock2')
 
     const v3 = mock.record.at(-1)
@@ -129,7 +156,7 @@ async function main() {
     await page.waitForSelector('#queue .card[data-status="error"]', { timeout: 15000 })
     const errorText = await page.textContent('#queue .card[data-status="error"] .sub')
     check('错误路径：显示 API Key 无效的原因', errorText.includes('API Key 无效'), `实际：${errorText}`)
-    check('错误路径：不显示成功结果', (await page.locator('#result-list .link').count()) === 0)
+    check('错误路径：不显示成功结果', (await page.locator('#queue .card[data-status="done"] .link').count()) === 0)
 
     // --- 6. 诊断与网络自检面板 -----------------------------------------------
     // 真机出问题时用户拿不到 logcat，所以这个面板是唯一的取证入口，必须验。

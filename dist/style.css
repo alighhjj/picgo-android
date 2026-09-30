@@ -216,6 +216,9 @@ button.ghost {
   border-radius: 12px;
 }
 
+/* 说明文字：按普通段落折行。
+   注意这里**不能**用 pre-wrap —— 源码里为了好读而换的行会被原样渲染出来，
+   表现为「句子在某个标点后凭空断行」。（这个坑实际踩过。） */
 .hint {
   font: 12px/1.7 system-ui, sans-serif;
   color: var(--sub);
@@ -224,8 +227,12 @@ button.ghost {
   border-radius: 10px;
   padding: 10px 12px;
   margin: 12px 0 0;
-  white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* 多行数据块（设置提示、诊断输出）才需要保留换行 */
+.hint-lines {
+  white-space: pre-wrap;
 }
 
 .field {
