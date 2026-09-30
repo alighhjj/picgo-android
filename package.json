@@ -1,0 +1,18 @@
+{
+  "name": "picgo-tutu",
+  "version": "0.1.0",
+  "private": true,
+  "description": "分享一张图片给这个 App，它上传到 TUTU 并自动复制直链",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "test": "node scripts/test-tutu.mjs",
+    "verify": "node scripts/verify-web.mjs",
+    "serve": "node scripts/serve.mjs",
+    "mock": "node scripts/mock-tutu.mjs",
+    "icon": "python scripts/make-icon.py && tauri icon app-icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.0"
+  }
+}

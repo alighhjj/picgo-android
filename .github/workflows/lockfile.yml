@@ -1,0 +1,45 @@
+name: 生成 Cargo.lock
+
+# 本机没有 Rust 工具链，就永远不会有 Cargo.lock；而 Cargo.toml 里写的是 `tauri = "2"`
+# 这类浮动版本，每次 CI 都会解析到不同版本，构建不可复现。
+#
+# 这个 workflow 让 CI 代劳生成并提交锁文件。只需手动触发一次；之后依赖版本被钉死，
+# 本地 `git pull` 就能拿到。顺带它也是一次便宜的依赖体检：cargo fetch 会暴露
+# Cargo.toml 里写错的 feature 名或包名，而不必等完整构建。
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # fetch 只解析依赖树、不编译，很快。
+      - name: 解析依赖
+        working-directory: src-tauri
+        run: cargo fetch
+
+      - name: 提交锁文件
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "锁文件无变化"
+            exit 0
+          fi
+          git commit -m "chore: 生成并锁定 Cargo.lock"
+          git push

@@ -1,0 +1,8 @@
+# 这个项目在 Linux（CI）上构建，源码一律以 LF 存储，避免 Windows 上提交时混入 CRLF。
+* text=auto eol=lf
+
+# 二进制资源不要做任何行尾转换
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary

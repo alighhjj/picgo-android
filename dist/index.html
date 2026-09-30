@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>PicGo Tutu</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="toast" hidden></div>
+
+    <header>
+      <h1>PicGo Tutu</h1>
+      <span id="transport-label" class="badge"></span>
+    </header>
+
+    <nav class="tabs">
+      <button type="button" data-tab="upload" class="is-active">上传</button>
+      <button type="button" data-tab="result">结果</button>
+      <button type="button" data-tab="history">历史</button>
+      <button type="button" data-tab="settings">设置</button>
+    </nav>
+
+    <main>
+      <section data-view="upload">
+        <p class="hint">
+          在相册或文件管理器里选中图片 →「分享」→ 选「PicGo Tutu」，
+          图片会自动上传，直链自动复制到剪贴板。
+        </p>
+
+        <div id="queue" class="stack"></div>
+        <div id="queue-empty" class="empty">
+          还没有待上传的图片。<br />
+          从相册分享一张图片进来，它就会出现在这里。
+        </div>
+
+        <div class="actions sticky">
+          <button id="upload-all" type="button">开始上传</button>
+          <button id="clear-queue" type="button" class="ghost" hidden>清空</button>
+        </div>
+      </section>
+
+      <section data-view="result" hidden>
+        <div id="result-list" class="stack"></div>
+        <div id="result-empty" class="empty">这次还没有上传成功的结果。</div>
+      </section>
+
+      <section data-view="history" hidden>
+        <div class="row between">
+          <span id="history-count" class="sub"></span>
+        </div>
+        <div id="history" class="stack"></div>
+        <div id="history-empty" class="empty">还没有历史记录。</div>
+      </section>
+
+      <section data-view="settings" hidden>
+        <form id="settings-form" class="stack">
+          <label class="field">
+            <span>登录 Cookie（KEEP_LOGIN）</span>
+            <input name="cookie" type="text" autocomplete="off" spellcheck="false"
+              placeholder="推荐填写，可上传到账号并设为不公开" />
+          </label>
+
+          <label class="field">
+            <span>API Key</span>
+            <input name="key" type="text" autocomplete="off" spellcheck="false"
+              placeholder="不填 Cookie 时使用，只能公开上传" />
+          </label>
+
+          <label class="field">
+            <span>上传可见性</span>
+            <select name="visibility">
+              <option value="public">公开（出现在探索页）</option>
+              <option value="unlisted">不公开（只有知道链接的人能看）</option>
+            </select>
+          </label>
+
+          <label class="check">
+            <input name="anonymousUpload" type="checkbox" />
+            <span>隐藏上传者身份（仅 API Key 通道生效）</span>
+          </label>
+
+          <label class="field">
+            <span>API 域名</span>
+            <input name="apiHost" type="text" autocomplete="off" spellcheck="false"
+              placeholder="https://tutu.to" />
+          </label>
+
+          <label class="field">
+            <span>CDN 域名（用于推导直链）</span>
+            <input name="cdnHost" type="text" autocomplete="off" spellcheck="false"
+              placeholder="https://t.tutu.to" />
+          </label>
+
+          <button type="submit">保存设置</button>
+        </form>
+
+        <pre id="settings-hint" class="hint"></pre>
+
+        <details id="diagnostics">
+          <summary>诊断</summary>
+          <pre id="diagnostics-out" class="hint"></pre>
+        </details>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+[package]
+name = "picgo-tutu"
+version = "0.1.0"
+description = "分享一张图片给这个 App，它上传到 TUTU 并自动复制直链"
+authors = ["alighhjj"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# 移动端把 Rust 编成静态库再由原生工程链接，所以必须有 lib 目标。
+# 这个 name 会被 tauri android init 写进 gen/android/gradle.properties 的 tauri_app_lib_name。
+name = "picgo_tutu_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 默认 TLS 在 reqwest 0.13 里就是 rustls（default-tls -> rustls），
+# 不能改成 native-tls —— 那在 Android 上要 OpenSSL，交叉编译不过。
+reqwest = { version = "0.13", features = ["multipart"] }
+base64 = "0.22"

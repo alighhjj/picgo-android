@@ -1,0 +1,118 @@
+name: 构建 Android APK
+
+# 本机没有 Rust、没有 JDK 21、没有 Android SDK，所以编译与出包全部由这里负责。
+# 注意：`tauri android init` 内部会跑 `cargo metadata`，因此它必须和 Rust 工具链一起
+# 在这个 workflow 里执行，而 gen/android 不进仓库。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      # 固定 NDK 版本：AGP 在未显式指定时会自己挑一个默认版本，两边对不上就报
+      # “NDK did not have a source.properties file”。这里显式安装并显式传入。
+      NDK_VERSION: 27.2.12479018
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- 前端与业务逻辑自检（几秒钟，先把能挡的挡住）------------------------
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 单测 tutu 业务逻辑
+        run: pnpm test
+
+      # --- 编译工具链 ---------------------------------------------------------
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # AGP 8.11 用的是 JDK 21 的字节码目标，JDK 17 会直接报错。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # setup-android 只接受 `packages` 这一个安装入口（没有 api-level / ndk-version 参数），
+      # 包名直接透传给 sdkmanager。平台装 35 与 36 两套，避免 CLI 生成的工程换
+      # compileSdk 时又要重跑一轮。
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-35
+            platforms;android-36
+            build-tools;35.0.0
+            build-tools;36.0.0
+            ndk;27.2.12479018
+
+      # Tauri 的 rust gradle 插件要找 NDK。SDK 路径不能写死：ubuntu runner 自带一份
+      # Android SDK，setup-android 会把包装进那一份，所以这里从环境变量反查真实路径，
+      # 找不到就直接失败（宁可红，也不要带着错路径去编译）。
+      - name: 导出 NDK 环境变量
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "SDK 目录：$SDK"
+          NDK_DIR="$SDK/ndk/$NDK_VERSION"
+          if [ ! -d "$NDK_DIR" ]; then
+            echo "::error::找不到 NDK $NDK_VERSION（$NDK_DIR）"
+            ls "$SDK/ndk" || true
+            exit 1
+          fi
+          # 社区实践里这几个变量名都出现过，全部指向同一个目录最省事。
+          echo "NDK_HOME=$NDK_DIR"         >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$NDK_DIR" >> "$GITHUB_ENV"
+
+      # --- 生成工程 + 注入定制 + 打包 ------------------------------------------
+      - name: 生成 Android 工程
+        run: npx tauri android init --ci --skip-targets-install
+
+      - name: 注入本项目的 Android 定制
+        run: node scripts/patch-android.mjs
+
+      # 备用接口要装哪个 NDK/compileSdk 不用猜：直接把生成结果打出来。
+      - name: 打印生成的 Android 版本配置
+        run: |
+          grep -E "compileSdk|minSdk|targetSdk|ndkVersion|applicationId" \
+            src-tauri/gen/android/app/build.gradle.kts || true
+          grep -E "tauri_app_lib_name" src-tauri/gen/android/gradle.properties || true
+
+      # 只出 arm64 与 armv7：这两者覆盖全部真实手机，同时跳过没人用的 x86 模拟器 ABI，
+      # 直接省掉一半 Rust 编译时间。产物是一个通用 APK。
+      - name: 构建 debug APK
+        run: npx tauri android build --apk --debug -t aarch64 -t armv7
+
+      - name: 列出产物
+        run: find src-tauri/gen/android/app/build/outputs -name "*.apk" -exec ls -lh {} \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: picgo-tutu-debug-apk
+          if-no-files-found: error
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
+      # 打 tag 时顺带把 APK 挂到 Release，方便手机上直接下载安装。
+      - name: 附加到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          generate_release_notes: true
